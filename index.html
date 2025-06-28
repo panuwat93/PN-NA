@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ตารางเวร PN & NA</title>
+  <link rel="stylesheet" href="style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@400;700&family=Material+Symbols+Rounded" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>โปรแกรมจัดตารางเวร SICU1 PN&NA</h1>
+      <div class="controls">
+        <nav class="duty-toolbar">
+          <button id="leave-btn" class="toolbar-btn"><span class="material-symbols-rounded">event_busy</span>ลาเรียน</button>
+          <button id="parttime-btn" class="toolbar-btn"><span class="material-symbols-rounded">person_add</span>PART TIME</button>
+          <button id="off-btn" class="toolbar-btn"><span class="material-symbols-rounded">beach_access</span>สุ่มวัน OFF</button>
+          <button id="mb-btn" class="toolbar-btn"><span class="material-symbols-rounded">cleaning_services</span>จัดเวรแม่บ้าน</button>
+          <button id="auto-duty-btn" class="toolbar-btn"><span class="material-symbols-rounded">autorenew</span>จัดตารางเวร</button>
+          <button id="reset-btn" class="toolbar-btn danger">RESET</button>
+          <button id="overview-btn" class="toolbar-btn info"><span class="material-symbols-rounded">table_view</span>ภาพรวมตารางเวร</button>
+          <button id="save-btn" class="toolbar-btn success"><span class="material-symbols-rounded">save</span>บันทึก</button>
+        </nav>
+        <div class="toolbar-selects">
+          <label>เดือน
+            <select id="month-select" class="styled-select">
+              <option value="0">มกราคม</option>
+              <option value="1">กุมภาพันธ์</option>
+              <option value="2">มีนาคม</option>
+              <option value="3">เมษายน</option>
+              <option value="4">พฤษภาคม</option>
+              <option value="5">มิถุนายน</option>
+              <option value="6">กรกฎาคม</option>
+              <option value="7">สิงหาคม</option>
+              <option value="8">กันยายน</option>
+              <option value="9">ตุลาคม</option>
+              <option value="10">พฤศจิกายน</option>
+              <option value="11">ธันวาคม</option>
+            </select>
+          </label>
+          <label>ปี
+            <select id="year-select" class="styled-select">
+              <option>2025</option>
+              <option>2026</option>
+              <option>2027</option>
+            </select>
+          </label>
+        </div>
+      </div>
+    </header>
+    <main>
+      <div style="display:flex;align-items:center;gap:1em;margin-bottom:0.5em;">
+        <section id="summary" style="margin:0;"></section>
+        <button id="hardreset-btn" class="toolbar-btn danger" style="min-width:120px;">HARD RESET</button>
+      </div>
+      <div class="table-wrapper">
+        <table id="duty-table"></table>
+      </div>
+    </main>
+  </div>
+  <div id="modal-bg" class="hidden"></div>
+  <div id="modal" class="modal hidden"></div>
+  <div id="leave-modal" class="modal hidden">
+    <button class="close-btn" onclick="closeLeaveModal()">&times;</button>
+    <h2>ลาเรียน</h2>
+    <div class="leave-section">
+      <label for="leave-staff">เลือกเจ้าหน้าที่</label>
+      <select id="leave-staff"></select>
+    </div>
+    <div class="leave-section">
+      <div class="leave-row">
+        <label><input type="radio" name="leave-type" value="weekly" checked> ทุกสัปดาห์</label>
+        <label><input type="radio" name="leave-type" value="custom"> กำหนดเอง</label>
+      </div>
+      <div class="leave-checkboxes" id="weekly-checkboxes">
+        <label><input type="checkbox" value="จันทร์"> จันทร์</label>
+        <label><input type="checkbox" value="อังคาร"> อังคาร</label>
+        <label><input type="checkbox" value="พุธ"> พุธ</label>
+        <label><input type="checkbox" value="พฤหัสบดี"> พฤหัสบดี</label>
+        <label><input type="checkbox" value="ศุกร์"> ศุกร์</label>
+        <label><input type="checkbox" value="เสาร์"> เสาร์</label>
+        <label><input type="checkbox" value="อาทิตย์"> อาทิตย์</label>
+      </div>
+      <div class="custom-date-picker" id="custom-date-picker" style="display:none; margin-top:1em;">
+        <input id="multi-date" type="text" placeholder="เลือกวันลาเรียน..." readonly>
+      </div>
+    </div>
+    <button type="submit" id="leave-save-btn">บันทึกวันลาเรียน</button>
+  </div>
+  <div id="overview-modal" class="modal hidden"></div>
+  <div id="parttime-modal" class="modal hidden">
+    <button class="close-btn" onclick="closeParttimeModal()">&times;</button>
+    <h2>PART TIME</h2>
+    <div class="leave-section">
+      <label for="parttime-staff">Select PART TIME</label>
+      <select id="parttime-staff"></select>
+    </div>
+    <div class="leave-section">
+      <label for="parttime-duty">Select Duty</label>
+      <select id="parttime-duty">
+        <option value="ช">เช้า</option>
+        <option value="บ">บ่าย</option>
+        <option value="ด">ดึก</option>
+        <option value="ชบ">เช้าบ่าย</option>
+        <option value="ดบ">ดึกบ่าย</option>
+      </select>
+    </div>
+    <div class="custom-date-picker" style="margin-top:1em;">
+      <input id="parttime-multi-date" type="text" placeholder="Select days..." readonly>
+    </div>
+    <button type="submit" id="parttime-save-btn">Save PART TIME</button>
+  </div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/superkarn/jsPDF-thai-font@latest/fontSarabun.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+  <script src="main.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+  <script src="https://npmcdn.com/flatpickr/dist/l10n/th.js"></script>
+</body>
+</html> 
