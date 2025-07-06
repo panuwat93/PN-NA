@@ -536,12 +536,14 @@ tr:hover td {
 }
 
 .cell-mb {
-  color: #43A047 !important;
-  font-weight: 700;
+  background: #e8f5e9 !important;
+  color: #388e3c !important;
+  font-weight: bold;
 }
 .cell-mbb {
-  font-weight: 700;
-  color: #43A047 !important;
+  background: #c8e6c9 !important;
+  color: #388e3c !important;
+  font-weight: bold;
 }
 .cell-mbb .mb {
   color: #43A047 !important;
@@ -550,8 +552,9 @@ tr:hover td {
   color: #222 !important;
 }
 .cell-o {
-  color: #e53935 !important;
-  font-weight: 700;
+  background: #ffe0e0 !important;
+  color: #d32f2f !important;
+  font-weight: bold;
 }
 .cell-va {
   color: #e53935 !important;

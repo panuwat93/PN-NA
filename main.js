@@ -245,8 +245,16 @@ function renderTable() {
       let cellContent = '';
       const dutyObj = dutyData[getDutyKey(name, i)];
       const duty = typeof dutyObj === 'object' ? dutyObj.code : dutyObj || '';
-      // กำหนดคลาสและเนื้อหาแต่ละเวร
-      if (duty === 'MB') {
+      let isAutoOff = typeof dutyObj === 'object' && dutyObj.autoOff;
+      // ถ้ามีเวรแล้ว (manual หรือแก้ไขเอง) ให้ลบ class สีฟ้า/สีแดงออก
+      if (duty) {
+        tdClass = tdClass.filter(c => c !== 'auto-off' && c !== 'missing-duty-red');
+      }
+      // แต้มสีฟ้า OFF อัตโนมัติ ถ้าไม่มีเวรและ autoOff จริง
+      if (!duty && isAutoOff) {
+        tdClass.push('auto-off');
+        cellContent = '';
+      } else if (duty === 'MB') {
         tdClass.push('cell-mb');
         cellContent = 'MB';
       } else if (duty === 'MBบ') {
@@ -254,7 +262,7 @@ function renderTable() {
         cellContent = '<span class="mb">MB</span><span class="b">บ</span>';
       } else if (duty === 'O') {
         tdClass.push('cell-o');
-        cellContent = 'O';
+        cellContent = '<span style="color:#d32f2f;font-weight:bold;">O</span>';
       } else if (duty === 'va' || duty === 'Va' || duty === 'VA') {
         tdClass.push('cell-va');
         cellContent = 'VAC';
@@ -873,6 +881,51 @@ function shuffle(array) {
 
 let currentAutoDutyDay = 1;
 
+// เพิ่มฟังก์ชันเช็คข้อห้ามเวรต่อเนื่อง
+function isForbiddenDutyTransition(prev, next) {
+  // prev = เวรวันก่อนหน้า, next = เวรวันนี้
+  // ข้อห้าม:
+  // 1. ชบ ห้ามต่อด้วย ด
+  // 2. บ ห้ามต่อด้วย ด
+  // 3. ดบ ห้ามต่อ ด
+  // 4. ดบ ห้ามต่อ ดบ
+  // 5. ชบ ห้ามต่อ ดบ
+  // 6. บ ห้ามต่อ ดอ
+  if (!prev || !next) return false;
+  if (prev === 'ชบ' && next === 'ด') return true;
+  if (prev === 'บ' && next === 'ด') return true;
+  if (prev === 'ดบ' && next === 'ด') return true;
+  if (prev === 'ดบ' && next === 'ดบ') return true;
+  if (prev === 'ชบ' && next === 'ดบ') return true;
+  if (prev === 'บ' && next === 'ดอ') return true;
+  return false;
+}
+
+// เพิ่มฟังก์ชันเช็คเวรชบติดกันเกิน 2 วัน และเวรที่มี 'บ' ติดกันเกิน 2 วัน
+function isForbiddenConsecutiveBShifts(name, day, code) {
+  // code: เวรที่กำลังจะใส่ (เช่น 'ช', 'บ', 'ชบ', 'ดบ')
+  // day: วันที่กำลังจะใส่ (1-indexed)
+  // name: ชื่อคน
+  // --- เช็คเวรที่มี 'บ' (บ, ชบ, ดบ) ติดกัน 3 วัน (ไม่ว่าจะสลับชนิดเวรใดก็ตาม) ---
+  const hasB = s => s && s.includes && s.includes('บ');
+  if (hasB(code)) {
+    const prev1 = dutyData[getDutyKey(name, day - 1)];
+    const prev2 = dutyData[getDutyKey(name, day - 2)];
+    const c1 = typeof prev1 === 'object' ? prev1.code : prev1 || '';
+    const c2 = typeof prev2 === 'object' ? prev2.code : prev2 || '';
+    if (hasB(c1) && hasB(c2)) return true; // ถ้า 2 วันก่อนหน้าเป็นเวรที่มี 'บ' ห้ามใส่เวรที่มี 'บ' ในวันนี้
+  }
+  // --- เช็คชบติดกันเกิน 2 วัน (optionally, ถ้ายังต้องการ) ---
+  if (code === 'ชบ') {
+    const prev1 = dutyData[getDutyKey(name, day - 1)];
+    const prev2 = dutyData[getDutyKey(name, day - 2)];
+    const c1 = typeof prev1 === 'object' ? prev1.code : prev1 || '';
+    const c2 = typeof prev2 === 'object' ? prev2.code : prev2 || '';
+    if (c1 === 'ชบ' && c2 === 'ชบ') return true;
+  }
+  return false;
+}
+
 function autoAssignDuties() {
   const year = Number(document.getElementById('year-select').value);
   const month = Number(document.getElementById('month-select').value);
@@ -881,148 +934,137 @@ function autoAssignDuties() {
   if (!window.missingDutyCells) window.missingDutyCells = [];
   window.missingDutyCells = [];
 
-  while (currentAutoDutyDay <= daysInMonth) {
-    let changed = false;
-    do {
-      changed = false;
-      const d = currentAutoDutyDay;
-      let morning = [], afternoon = [], night = [];
-      // 1. ตรวจสอบเวรที่มีอยู่
-      for (const name of mainStaff) {
-        const duty = dutyData[getDutyKey(name, d)];
-        if (duty === 'ช' || (typeof duty === 'object' && duty.code === 'ช')) morning.push(name);
-        if (duty === 'บ' || (typeof duty === 'object' && duty.code === 'บ')) afternoon.push(name);
-        if (duty === 'ด' || (typeof duty === 'object' && duty.code === 'ด')) night.push(name);
-        if (duty === 'ชบ' || (typeof duty === 'object' && duty.code === 'ชบ')) { morning.push(name); afternoon.push(name); }
-        if (duty === 'ดบ' || (typeof duty === 'object' && duty.code === 'ดบ')) { night.push(name); afternoon.push(name); }
-        if (duty === 'MBบ' || (typeof duty === 'object' && duty.code === 'MBบ')) afternoon.push(name);
-      }
-      // 1. เติมช่องว่างก่อน
-      function getAvailableForShift(shift) {
-        // ป้องกัน error ถ้ายังไม่ได้เซ็ตวัน
-        if (!window.sukanyaChbDays) window.sukanyaChbDays = [];
-        if (!window.sukanyaMbBdays) window.sukanyaMbBdays = [];
-        return mainStaff.filter(name => {
-          // เงื่อนไขพิเศษสำหรับภาณุวัฒน์
-          if (name === 'ภาณุวัฒน์') {
-            const date = new Date(year, month, d);
-            const isWeekend = date.getDay() === 0 || date.getDay() === 6;
-            if (isWeekend) {
-              // เสาร์-อาทิตย์: ห้ามเวรเช้า/บ่าย/ชบ/ดบ
-              if (shift !== 'night') return false;
-            }
-          }
-          // เงื่อนไขพิเศษสำหรับสุกัญญา
-          if (name === 'สุกัญญา') {
-            // ไม่สุ่มเวรดบ
-            if (shift === 'afternoon' && window.sukanyaMbBdays.includes(d)) return false; // MBบ วันนี้
-            if (shift === 'afternoon' && window.sukanyaChbDays.includes(d)) return false; // ชบ วันนี้
-            if (shift === 'afternoon' && !window.sukanyaMbBdays.includes(d) && !window.sukanyaChbDays.includes(d)) return false; // ไม่ให้บ่ายปกติ
-            if (shift === 'night' && window.sukanyaMbBdays.includes(d)) return false; // MBบ วันนี้
-            if (shift === 'night' && window.sukanyaChbDays.includes(d)) return false; // ชบ วันนี้
-          }
-          const duty = dutyData[getDutyKey(name, d)];
-          if (typeof duty === 'object' && duty.manual) return false;
-          if (duty === 'vac' || duty === 'อ' || duty === 'ดอ' || duty === 'MB' || duty === 'MBบ') return false;
-          if (typeof duty === 'object' && (duty.code === 'vac' || duty.code === 'อ' || duty.code === 'ดอ' || duty.code === 'MB' || duty.code === 'MBบ')) return false;
-          if (duty === 'O') return false;
-          if (typeof duty === 'object' && duty.code === 'O') return false;
-          if (duty) return false;
-          // ไม่สุ่มเวรบ/ชบ/ดบ ให้ภาณุวัฒน์เลย
-          if (name === 'ภาณุวัฒน์' && (shift === 'afternoon' || shift === 'double')) return false;
-          return true;
-        });
-      }
-      // เช้า
-      while (morning.length < 2) {
-        let available = getAvailableForShift('morning');
-        if (available.length === 0) break;
-        let idx = Math.floor(Math.random() * available.length);
-        let name = available.splice(idx, 1)[0];
-        dutyData[getDutyKey(name, d)] = { code: 'ช' };
-        morning.push(name);
-        changed = true;
-      }
-      // บ่าย
-      while (afternoon.length < 2) {
-        let available = getAvailableForShift('afternoon');
-        if (available.length === 0) break;
-        let idx = Math.floor(Math.random() * available.length);
-        let name = available.splice(idx, 1)[0];
-        dutyData[getDutyKey(name, d)] = { code: 'บ' };
-        afternoon.push(name);
-        changed = true;
-      }
-      // ดึก
-      while (night.length < 2) {
-        let available = getAvailableForShift('night');
-        if (available.length === 0) break;
-        let idx = Math.floor(Math.random() * available.length);
-        let name = available.splice(idx, 1)[0];
-        dutyData[getDutyKey(name, d)] = { code: 'ด' };
-        night.push(name);
-        changed = true;
-      }
-      // 2. อัปเกรดเวรเดี่ยวเป็นเวรคู่ (ถ้ายังไม่ครบ)
-      function upgradeSingleToDouble(shift, codeSingle, codeDouble, pushTo) {
-        let candidates = mainStaff.filter(name => {
-          if (name === 'ภาณุวัฒน์') {
-            const date = new Date(year, month, d);
-            const isWeekend = date.getDay() === 0 || date.getDay() === 6;
-            if (isWeekend) return false; // วันหยุดห้ามอัปเกรดใด ๆ ให้ภาณุวัฒน์
-            return false; // ไม่อัปเกรดเวรเดี่ยวเป็นชบ/ดบให้ภาณุวัฒน์เลย
-          }
-          if (name === 'สุกัญญา') return false;
-          const duty = dutyData[getDutyKey(name, d)];
-          if (typeof duty !== 'object' || duty.manual) return false;
-          if (duty.code !== codeSingle) return false;
-          return true;
-        });
-        while (pushTo.length < 2 && candidates.length > 0) {
-          let idx = Math.floor(Math.random() * candidates.length);
-          let name = candidates.splice(idx, 1)[0];
-          dutyData[getDutyKey(name, d)] = { code: codeDouble };
-          if (codeDouble === 'ชบ') { morning.push(name); afternoon.push(name); }
-          if (codeDouble === 'ดบ') { night.push(name); afternoon.push(name); }
-          pushTo.push(name);
-          changed = true;
-        }
-      }
-      if (morning.length < 2) upgradeSingleToDouble('morning', 'ช', 'ชบ', morning);
-      if (afternoon.length < 2) {
-        let candidates = mainStaff.filter(name => {
-          const duty = dutyData[getDutyKey(name, d)];
-          if (typeof duty !== 'object' || duty.manual) return false;
-          if (duty.code !== 'บ') return false;
-          return true;
-        });
-        while (afternoon.length < 2 && candidates.length > 0) {
-          let idx = Math.floor(Math.random() * candidates.length);
-          let name = candidates.splice(idx, 1)[0];
-          let upgrade = Math.random() < 0.5 ? 'ชบ' : 'ดบ';
-          dutyData[getDutyKey(name, d)] = { code: upgrade };
-          if (upgrade === 'ชบ') morning.push(name);
-          if (upgrade === 'ดบ') night.push(name);
-          afternoon.push(name);
-          changed = true;
-        }
-      }
-      if (night.length < 2) upgradeSingleToDouble('night', 'ด', 'ดบ', night);
-      // 4. ถ้ายังไม่ครบ 2 คนในเวรใด ให้ขึ้นสีแดง
-      ['morning','afternoon','night'].forEach(type => {
-        const arr = window.missingDutyCells.filter(e => !(e.type === type && e.day === d));
-        window.missingDutyCells = arr;
-      });
-      if (morning.length < 2) window.missingDutyCells.push({ type: 'morning', day: d, color: 'red' });
-      if (afternoon.length < 2) window.missingDutyCells.push({ type: 'afternoon', day: d, color: 'red' });
-      if (night.length < 2) window.missingDutyCells.push({ type: 'night', day: d, color: 'red' });
-      saveDutyData();
-      renderTable();
-      renderDutySummary();
-    } while (changed);
-    currentAutoDutyDay++;
-    break;
+  // เตรียมข้อมูลนับเวรแต่ละคน
+  let dutyCount = {};
+  mainStaff.forEach(name => { dutyCount[name] = 0; });
+
+  // ฟังก์ชันเช็ค constraint ทั้งหมดของวันนั้น
+  function isValidDay(assignments, locked, prevDuties) {
+    // assignments: [{name, code}] สำหรับวันนั้น
+    // locked: {name: code} เวรที่ล็อกไว้แล้ว
+    // prevDuties: {name: code} เวรวันก่อนหน้า
+    let morning = [], afternoon = [], night = [];
+    let used = new Set();
+    for (const a of assignments) {
+      if (used.has(a.name)) return false; // คนเดียวกันซ้ำเวร
+      used.add(a.name);
+      // ข้อห้ามเวรต่อเนื่อง
+      if (isForbiddenDutyTransition(prevDuties[a.name] || '', a.code)) return false;
+      if (a.code === 'MB') continue; // MB ไม่ถูกนับในเวรเช้า
+      if (a.code === 'ช') morning.push(a.name);
+      if (a.code === 'บ') afternoon.push(a.name);
+      if (a.code === 'ด') night.push(a.name);
+      if (a.code === 'ชบ') { morning.push(a.name); afternoon.push(a.name); }
+      if (a.code === 'ดบ') { night.push(a.name); afternoon.push(a.name); }
+      if (a.code === 'MBบ') afternoon.push(a.name);
+    }
+    for (const name in locked) {
+      const code = locked[name];
+      if (code === 'MB') continue;
+      if (code === 'ช') morning.push(name);
+      if (code === 'บ') afternoon.push(name);
+      if (code === 'ด') night.push(name);
+      if (code === 'ชบ') { morning.push(name); afternoon.push(name); }
+      if (code === 'ดบ') { night.push(name); afternoon.push(name); }
+      if (code === 'MBบ') afternoon.push(name);
+    }
+    // ต้องครบ 2 คน/เวร
+    if (morning.length !== 2) return false;
+    if (afternoon.length !== 2) return false;
+    if (night.length !== 2) return false;
+    return true;
   }
+
+  // ลูปแต่ละวัน
+  for (let d = 1; d <= daysInMonth; d++) {
+    // 1. ตรวจสอบเวรที่ล็อกไว้แล้ว (อบรม, parttime, MB, MBบ, O)
+    let locked = {};
+    let prevDuties = {};
+    for (const name of mainStaff) {
+      const duty = dutyData[getDutyKey(name, d)];
+      if (duty) locked[name] = (typeof duty === 'object' ? duty.code : duty);
+      const prevDuty = dutyData[getDutyKey(name, d - 1)];
+      prevDuties[name] = typeof prevDuty === 'object' ? prevDuty.code : prevDuty || '';
+    }
+    // 2. สร้าง candidate เวรสำหรับแต่ละคน (ช, บ, ด, ชบ, ดบ)
+    let candidates = [];
+    for (const name of mainStaff) {
+      if (locked[name]) continue;
+      // ข้อห้ามเวรต่อเนื่อง
+      let possible = [];
+      if (!isForbiddenDutyTransition(prevDuties[name], 'ช')) possible.push('ช');
+      if (!isForbiddenDutyTransition(prevDuties[name], 'บ')) possible.push('บ');
+      if (!isForbiddenDutyTransition(prevDuties[name], 'ด')) possible.push('ด');
+      if (!isForbiddenDutyTransition(prevDuties[name], 'ชบ')) possible.push('ชบ');
+      if (!isForbiddenDutyTransition(prevDuties[name], 'ดบ')) possible.push('ดบ');
+      candidates.push({ name, possible, count: dutyCount[name] });
+    }
+    // เพิ่มบรรทัดนี้เพื่อเฉลี่ยเวร
+    candidates.sort((a, b) => a.count - b.count);
+    // 3. backtracking หา assignments ที่ valid (แต่ละคนในวันนั้นได้เวรเดียว)
+    let found = false;
+    let result = [];
+    function backtrack(idx, current) {
+      if (found) return;
+      if (current.length === candidates.length) {
+        if (isValidDay(current, locked, prevDuties)) {
+          found = true;
+          result = current.slice();
+        }
+        return;
+      }
+      const c = candidates[idx];
+      for (let code of c.possible) {
+        // ห้ามซ้ำกับเวรที่ล็อกไว้แล้ว
+        if (locked[c.name]) continue;
+        // ห้ามซ้ำกับคนอื่นใน current
+        if (current.find(a => a.name === c.name)) continue;
+        // เช็ค constraint ใหม่: ห้ามชบติดกันเกิน 2 วัน และเวรที่มี 'บ' ติดกันเกิน 2 วัน
+        if (isForbiddenConsecutiveBShifts(c.name, d, code)) continue;
+        current.push({ name: c.name, code });
+        backtrack(idx + 1, current);
+        current.pop();
+        if (found) return;
+      }
+    }
+    backtrack(0, []);
+    // 4. ถ้าเจอ combination ที่ valid ให้ใส่เวร
+    if (found) {
+      for (const a of result) {
+        dutyData[getDutyKey(a.name, d)] = { code: a.code };
+        // นับเวรคู่เป็น 2 เวร
+        if (a.code === 'ชบ' || a.code === 'ดบ') {
+          dutyCount[a.name] += 2;
+        } else {
+          dutyCount[a.name]++;
+        }
+      }
+    }
+    // --- ตรวจสอบเวรขาด ---
+    // (ถ้าไม่เจอ combination ที่ valid ให้แสดงเตือน)
+    let morning = [], afternoon = [], night = [];
+    for (const name of mainStaff) {
+      const duty = dutyData[getDutyKey(name, d)];
+      const code = typeof duty === 'object' ? duty.code : duty || '';
+      if (code === 'MB') continue;
+      if (code === 'ช') morning.push(name);
+      if (code === 'บ') afternoon.push(name);
+      if (code === 'ด') night.push(name);
+      if (code === 'ชบ') { morning.push(name); afternoon.push(name); }
+      if (code === 'ดบ') { night.push(name); afternoon.push(name); }
+      if (code === 'MBบ') afternoon.push(name);
+    }
+    ['morning','afternoon','night'].forEach(type => {
+      const arr = window.missingDutyCells.filter(e => !(e.type === type && e.day === d));
+      window.missingDutyCells = arr;
+    });
+    if (morning.length < 2) window.missingDutyCells.push({ type: 'morning', day: d, color: 'red' });
+    if (afternoon.length < 2) window.missingDutyCells.push({ type: 'afternoon', day: d, color: 'red' });
+    if (night.length < 2) window.missingDutyCells.push({ type: 'night', day: d, color: 'red' });
+  }
+  saveDutyData();
+  renderTable();
+  renderDutySummary();
 }
 
 function renderDutySummary() {
@@ -1143,7 +1185,7 @@ function showOverviewModal() {
         cellContent = '<span class="mb">MB</span><span class="b">บ</span>';
       } else if (duty === 'O') {
         tdClass.push('cell-o');
-        cellContent = 'O';
+        cellContent = '<span style="color:#d32f2f;font-weight:bold;">O</span>';
       } else if (duty === 'va' || duty === 'Va' || duty === 'VA') {
         tdClass.push('cell-va');
         cellContent = 'VAC';
@@ -1306,4 +1348,186 @@ function applyParttimeDuty() {
   saveDutyData();
   modal.classList.add('hidden');
   renderTable();
+}
+
+// ========== GLOBAL AUTO ASSIGN (สมบูรณ์แบบ) ========== //
+function globalAutoAssignDuties() {
+  const year = Number(document.getElementById('year-select').value);
+  const month = Number(document.getElementById('month-select').value);
+  const daysInMonth = getDaysInMonth(year, month);
+  const mainStaff = staff.filter(s => s.type === 'main').map(s => s.name);
+  // เตรียมข้อมูลเวรล็อกไว้แล้ว (อบรม, parttime, MB, MBบ, O)
+  let locked = {};
+  for (let d = 1; d <= daysInMonth; d++) {
+    for (const name of mainStaff) {
+      const duty = dutyData[getDutyKey(name, d)];
+      if (duty) {
+        if (!locked[d]) locked[d] = {};
+        locked[d][name] = (typeof duty === 'object' ? duty.code : duty);
+      }
+    }
+  }
+  // เตรียม structure สำหรับ solution ที่ดีที่สุด
+  let bestSolution = null;
+  let bestScore = Infinity;
+  // Helper: คำนวณ score (variance ของจำนวนเวรแต่ละคน)
+  function calcScore(dutyCount) {
+    const arr = Object.values(dutyCount);
+    const mean = arr.reduce((a,b)=>a+b,0)/arr.length;
+    return arr.reduce((s,x)=>s+Math.pow(x-mean,2),0);
+  }
+  // Helper: ตรวจ constraint ข้ามวัน (บติดกัน 3 วัน, ชบติดกันเกิน 2 วัน)
+  function isAllConstraintOk(assignments) {
+    // assignments: { [name]: { [day]: code } }
+    for (const name of mainStaff) {
+      let bStreak = 0, chbStreak = 0;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const code = assignments[name][d] || '';
+        if (code.includes('บ')) {
+          bStreak++;
+        } else {
+          bStreak = 0;
+        }
+        if (code === 'ชบ') {
+          chbStreak++;
+        } else {
+          chbStreak = 0;
+        }
+        if (bStreak >= 3) return false;
+        if (chbStreak >= 3) return false;
+      }
+    }
+    return true;
+  }
+  // Helper: ตรวจสอบว่า assignments วัน d ถูกต้อง (2 คน/เวร, ไม่ซ้ำ, ไม่ผิดเวรล็อก)
+  function isValidDay(assignments, d) {
+    let morning = [], afternoon = [], night = [], used = new Set();
+    for (const name of mainStaff) {
+      const code = assignments[name][d] || '';
+      if (!code) continue;
+      if (used.has(name)) return false;
+      used.add(name);
+      if (code === 'MB') continue;
+      if (code === 'ช') morning.push(name);
+      if (code === 'บ') afternoon.push(name);
+      if (code === 'ด') night.push(name);
+      if (code === 'ชบ') { morning.push(name); afternoon.push(name); }
+      if (code === 'ดบ') { night.push(name); afternoon.push(name); }
+      if (code === 'MBบ') afternoon.push(name);
+    }
+    for (const name in (locked[d]||{})) {
+      const code = locked[d][name];
+      if (code === 'MB') continue;
+      if (code === 'ช') morning.push(name);
+      if (code === 'บ') afternoon.push(name);
+      if (code === 'ด') night.push(name);
+      if (code === 'ชบ') { morning.push(name); afternoon.push(name); }
+      if (code === 'ดบ') { night.push(name); afternoon.push(name); }
+      if (code === 'MBบ') afternoon.push(name);
+    }
+    if (morning.length !== 2) return false;
+    if (afternoon.length !== 2) return false;
+    if (night.length !== 2) return false;
+    return true;
+  }
+  // Backtracking ทั้งเดือน
+  function backtrack(day, assignments, dutyCount) {
+    if (day > daysInMonth) {
+      if (!isAllConstraintOk(assignments)) return;
+      const score = calcScore(dutyCount);
+      if (score < bestScore) {
+        bestScore = score;
+        bestSolution = JSON.parse(JSON.stringify(assignments));
+      }
+      return;
+    }
+    // เตรียม candidate สำหรับวันนี้
+    let todayLocked = locked[day] || {};
+    let freeStaff = mainStaff.filter(name => !todayLocked[name]);
+    // สร้าง combination เวร (เลือก 6 ช่อง: 2 เช้า 2 บ่าย 2 ดึก จาก freeStaff)
+    let codes = ['ช','บ','ด','ชบ','ดบ'];
+    // สร้างทุก combination ที่เป็นไปได้ (brute-force)
+    function* permute(arr, k) {
+      if (k === 0) yield [];
+      else for (let i = 0; i < arr.length; i++) {
+        let rest = arr.slice(0,i).concat(arr.slice(i+1));
+        for (let tail of permute(rest, k-1)) yield [arr[i]].concat(tail);
+      }
+    }
+    // สร้าง assignment ทุกแบบ
+    for (let perm of permute(freeStaff, freeStaff.length)) {
+      // สร้าง code assignment
+      let codesets = [];
+      function* assignCode(idx, arr) {
+        if (idx === arr.length) yield arr.slice();
+        else for (let c of codes) {
+          arr[idx] = c;
+          yield* assignCode(idx+1, arr);
+        }
+      }
+      for (let codeArr of assignCode(0, new Array(freeStaff.length))) {
+        // สร้าง assignments ของวันนี้
+        let todayAssign = {};
+        for (let i = 0; i < freeStaff.length; i++) {
+          todayAssign[freeStaff[i]] = codeArr[i];
+        }
+        // รวมกับเวรล็อก
+        let merged = {};
+        for (const name of mainStaff) {
+          merged[name] = todayLocked[name] || todayAssign[name] || '';
+        }
+        // ตรวจสอบ constraint รายวัน
+        if (!isValidDay(merged, day)) continue;
+        // ตรวจสอบ constraint ข้ามวัน (บติดกัน 3 วัน, ชบติดกันเกิน 2 วัน)
+        let ok = true;
+        for (const name of mainStaff) {
+          let prev1 = assignments[name][day-1] || '';
+          let prev2 = assignments[name][day-2] || '';
+          let curr = merged[name];
+          // ห้ามบติดกัน 3 วัน
+          if (curr.includes('บ') && prev1.includes('บ') && prev2.includes('บ')) { ok = false; break; }
+          // ห้ามชบติดกันเกิน 2 วัน
+          if (curr === 'ชบ' && prev1 === 'ชบ' && prev2 === 'ชบ') { ok = false; break; }
+        }
+        if (!ok) continue;
+        // อัปเดต assignments, dutyCount
+        let newAssignments = JSON.parse(JSON.stringify(assignments));
+        let newDutyCount = Object.assign({}, dutyCount);
+        for (const name of mainStaff) {
+          newAssignments[name][day] = merged[name];
+          if (merged[name] === 'ชบ' || merged[name] === 'ดบ') newDutyCount[name] += 2;
+          else if (merged[name] && merged[name] !== 'MB' && merged[name] !== 'MBบ') newDutyCount[name] += 1;
+        }
+        backtrack(day+1, newAssignments, newDutyCount);
+      }
+    }
+  }
+  // เริ่มต้น assignments ว่าง
+  let initAssignments = {};
+  let initDutyCount = {};
+  for (const name of mainStaff) {
+    initAssignments[name] = {};
+    initDutyCount[name] = 0;
+  }
+  backtrack(1, initAssignments, initDutyCount);
+  // ถ้าเจอ solution ที่ดีที่สุด ให้ใส่ dutyData
+  if (bestSolution) {
+    for (const name of mainStaff) {
+      for (let d = 1; d <= daysInMonth; d++) {
+        const code = bestSolution[name][d] || '';
+        if (code) {
+          dutyData[getDutyKey(name, d)] = { code };
+        } else {
+          // mark OFF อัตโนมัติ (สีฟ้า)
+          dutyData[getDutyKey(name, d)] = { code: '', autoOff: true };
+        }
+      }
+    }
+    saveDutyData();
+    renderTable();
+    renderDutySummary();
+    alert('จัดเวรสมบูรณ์แบบแล้ว!');
+  } else {
+    alert('ไม่สามารถจัดเวรได้ตาม constraint ที่กำหนด');
+  }
 } 
